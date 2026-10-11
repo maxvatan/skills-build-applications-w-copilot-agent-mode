@@ -54,7 +54,7 @@ const workoutSeeds = [
     category: 'cycling',
     difficulty: 'intermediate',
     durationMinutes: 40,
-    exercises: ['8-minute easy warmup', '4 x 4-minute tempo intervals', '8-minute easy cooldown'],
+    exercises: ['10-minute easy warmup', '5 x 4-minute tempo intervals', '10-minute easy cooldown'],
   },
 ];
 
@@ -93,33 +93,47 @@ async function seedDatabase(): Promise<void> {
       users.set(seed.username, user._id);
     }
 
+    const seededUserIds = [...users.values()];
+    await Team.updateMany({}, { $pull: { members: { $in: seededUserIds } } });
     for (const [teamName, teamId] of teams) {
       const memberIds = userSeeds
         .filter((user) => user.team === teamName)
         .map((user) => users.get(user.username))
         .filter((id): id is mongoose.Types.ObjectId => id !== undefined);
-      await Team.findByIdAndUpdate(teamId, { $set: { members: memberIds } }, { runValidators: true });
+      await Team.findByIdAndUpdate(
+        teamId,
+        { $addToSet: { members: { $each: memberIds } } },
+        { runValidators: true },
+      );
     }
 
-    const pointsByUser = new Map<string, number>();
     for (const seed of activitySeeds) {
-      const userId = users.get(seed.username);
-      if (!userId) {
-        throw new Error(`Missing seeded user: ${seed.username}`);
-      }
       const { username, ...activity } = seed;
+      const userId = users.get(username);
+      if (!userId) {
+        throw new Error(`Missing seeded user: ${username}`);
+      }
       await Activity.findOneAndUpdate(
         { user: userId, loggedAt: new Date(activity.loggedAt) },
         { $set: { ...activity, user: userId, loggedAt: new Date(activity.loggedAt) } },
         { upsert: true, returnDocument: 'after', runValidators: true },
       );
-      pointsByUser.set(username, (pointsByUser.get(username) ?? 0) + activity.points);
     }
 
-    for (const [username, userId] of users) {
+    const leaderboardTotals = await Activity.aggregate([
+      { $match: { user: { $in: seededUserIds } } },
+      { $group: { _id: '$user', points: { $sum: '$points' } } },
+    ]);
+    const pointsByUserId = new Map(
+      leaderboardTotals.map((entry: { _id: mongoose.Types.ObjectId; points: number }) => [
+        entry._id.toString(),
+        entry.points,
+      ]),
+    );
+    for (const userId of users.values()) {
       await LeaderboardEntry.findOneAndUpdate(
         { user: userId },
-        { $set: { points: pointsByUser.get(username) ?? 0, period: 'all-time' } },
+        { $set: { points: pointsByUserId.get(userId.toString()) ?? 0, period: 'all-time' } },
         { upsert: true, returnDocument: 'after', runValidators: true },
       );
     }

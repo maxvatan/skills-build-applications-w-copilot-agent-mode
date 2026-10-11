@@ -8,6 +8,13 @@ import { Workout } from '../models/workout.js';
 
 const router = Router();
 
+async function setUserTeam(userId: Types.ObjectId, teamId: Types.ObjectId | null): Promise<void> {
+  await Team.updateMany({ members: userId }, { $pull: { members: userId } });
+  if (teamId) {
+    await Team.findByIdAndUpdate(teamId, { $addToSet: { members: userId } });
+  }
+}
+
 async function refreshLeaderboard(userId: string): Promise<void> {
   const [totals] = await Activity.aggregate([
     { $match: { user: new Types.ObjectId(userId) } },
@@ -26,7 +33,22 @@ router.get('/users', async (_request, response) => {
 });
 
 router.post('/users', async (request, response) => {
-  response.status(201).json(await User.create(request.body));
+  const team = request.body.team ? await Team.findById(request.body.team) : null;
+  if (request.body.team && !team) {
+    response.status(400).json({ error: 'Team not found' });
+    return;
+  }
+
+  const user = await User.create(request.body);
+  if (team) {
+    await setUserTeam(user._id, team._id);
+  }
+  await LeaderboardEntry.findOneAndUpdate(
+    { user: user._id },
+    { $setOnInsert: { points: 0, period: 'all-time' } },
+    { upsert: true },
+  );
+  response.status(201).json(await user.populate('team', 'name'));
 });
 
 router.get('/users/:id', async (request, response) => {
@@ -39,13 +61,29 @@ router.get('/users/:id', async (request, response) => {
 });
 
 router.patch('/users/:id', async (request, response) => {
+  const existingUser = await User.findById(request.params.id);
+  if (!existingUser) {
+    response.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  const hasTeamUpdate = Object.hasOwn(request.body, 'team');
+  const team = hasTeamUpdate && request.body.team ? await Team.findById(request.body.team) : null;
+  if (hasTeamUpdate && request.body.team && !team) {
+    response.status(400).json({ error: 'Team not found' });
+    return;
+  }
+
   const user = await User.findByIdAndUpdate(request.params.id, request.body, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true,
   }).populate('team', 'name');
   if (!user) {
     response.status(404).json({ error: 'User not found' });
     return;
+  }
+  if (hasTeamUpdate) {
+    await setUserTeam(user._id, team?._id ?? null);
   }
   response.json(user);
 });
@@ -69,7 +107,18 @@ router.get('/teams', async (_request, response) => {
 });
 
 router.post('/teams', async (request, response) => {
-  response.status(201).json(await Team.create(request.body));
+  const memberIds = Array.isArray(request.body.members) ? request.body.members : [];
+  const validMembers = await User.find({ _id: { $in: memberIds } }).select('_id');
+  if (validMembers.length !== memberIds.length) {
+    response.status(400).json({ error: 'One or more team members were not found' });
+    return;
+  }
+  const team = await Team.create(request.body);
+  await Team.updateMany({ _id: { $ne: team._id }, members: { $in: validMembers.map((member) => member._id) } }, {
+    $pull: { members: { $in: validMembers.map((member) => member._id) } },
+  });
+  await Promise.all(validMembers.map((member) => User.findByIdAndUpdate(member._id, { $set: { team: team._id } })));
+  response.status(201).json(await team.populate('members', 'username displayName'));
 });
 
 router.get('/teams/:id', async (request, response) => {
@@ -82,13 +131,42 @@ router.get('/teams/:id', async (request, response) => {
 });
 
 router.patch('/teams/:id', async (request, response) => {
+  const existingTeam = await Team.findById(request.params.id);
+  if (!existingTeam) {
+    response.status(404).json({ error: 'Team not found' });
+    return;
+  }
+
+  let validMembers: Awaited<ReturnType<typeof User.find>> | undefined;
+  if (Object.hasOwn(request.body, 'members')) {
+    if (!Array.isArray(request.body.members)) {
+      response.status(400).json({ error: 'Team members must be an array of user IDs' });
+      return;
+    }
+    validMembers = await User.find({ _id: { $in: request.body.members } }).select('_id');
+    if (validMembers.length !== request.body.members.length) {
+      response.status(400).json({ error: 'One or more team members were not found' });
+      return;
+    }
+  }
+
   const team = await Team.findByIdAndUpdate(request.params.id, request.body, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true,
   }).populate('members', 'username displayName');
   if (!team) {
     response.status(404).json({ error: 'Team not found' });
     return;
+  }
+  if (Object.hasOwn(request.body, 'members')) {
+    const members = validMembers ?? [];
+    await Promise.all([
+      User.updateMany({ team: team._id, _id: { $nin: members.map((member) => member._id) } }, { $set: { team: null } }),
+      ...members.map((member) => User.findByIdAndUpdate(member._id, { $set: { team: team._id } })),
+      Team.updateMany({ _id: { $ne: team._id }, members: { $in: members.map((member) => member._id) } }, {
+        $pull: { members: { $in: members.map((member) => member._id) } },
+      }),
+    ]);
   }
   response.json(team);
 });
@@ -99,6 +177,7 @@ router.delete('/teams/:id', async (request, response) => {
     response.status(404).json({ error: 'Team not found' });
     return;
   }
+  await User.updateMany({ team: team._id }, { $set: { team: null } });
   response.status(204).end();
 });
 
@@ -111,6 +190,10 @@ router.get('/activities', async (request, response) => {
 });
 
 router.post('/activities', async (request, response) => {
+  if (!(await User.exists({ _id: request.body.user }))) {
+    response.status(400).json({ error: 'User not found' });
+    return;
+  }
   const activity = await Activity.create(request.body);
   await refreshLeaderboard(activity.user.toString());
   response.status(201).json(activity);
@@ -132,8 +215,13 @@ router.patch('/activities/:id', async (request, response) => {
     return;
   }
 
+  if (request.body.user && !(await User.exists({ _id: request.body.user }))) {
+    response.status(400).json({ error: 'User not found' });
+    return;
+  }
+
   const activity = await Activity.findByIdAndUpdate(request.params.id, request.body, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true,
   });
   if (!activity) {
@@ -191,7 +279,7 @@ router.get('/workouts/:id', async (request, response) => {
 
 router.patch('/workouts/:id', async (request, response) => {
   const workout = await Workout.findByIdAndUpdate(request.params.id, request.body, {
-    new: true,
+    returnDocument: 'after',
     runValidators: true,
   });
   if (!workout) {
