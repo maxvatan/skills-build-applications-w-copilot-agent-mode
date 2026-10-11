@@ -11,7 +11,9 @@ npm install
 npm run dev
 ```
 
-Set `PORT` to override the default port. The API starts after a successful MongoDB connection.
+Set `PORT` to override the default port (`8000`). The API starts after a successful MongoDB connection.
+
+The API base URL is `https://$CODESPACE_NAME-8000.app.github.dev` when `CODESPACE_NAME` is set (as in GitHub Codespaces) and `http://localhost:8000` otherwise. The server logs the active base URL on startup and returns it from `GET /api/health`. Port 8000 must be forwarded as public for the Codespaces URL to be reachable from a browser.
 
 ## Endpoints
 
