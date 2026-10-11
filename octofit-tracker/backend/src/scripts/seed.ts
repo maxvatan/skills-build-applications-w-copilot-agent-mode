@@ -58,6 +58,9 @@ const workoutSeeds = [
   },
 ];
 
+/**
+ * Seed the octofit_db database with test data (run with `npm run seed`)
+ */
 async function seedDatabase(): Promise<void> {
   await mongoose.connect(connectionString);
   console.log('Connected to octofit_db');
