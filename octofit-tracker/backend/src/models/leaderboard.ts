@@ -9,4 +9,4 @@ const leaderboardSchema = new Schema(
   { timestamps: true },
 );
 
-export const LeaderboardEntry = model('LeaderboardEntry', leaderboardSchema);
+export const Leaderboard = model('Leaderboard', leaderboardSchema);

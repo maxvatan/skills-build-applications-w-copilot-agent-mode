@@ -26,4 +26,4 @@ Activity lists can be filtered with `?user=<user-id>`, and workout lists with `?
 
 The leaderboard is read-only because scores are derived from activity points. Logging, updating, or deleting an activity recalculates the user's all-time score. Creating or changing team membership keeps the team and user references in sync; deleting a team clears its members' team references. Deleting a user also removes their activities and leaderboard entry.
 
-The seed command upserts its sample users, teams, activities, leaderboard entries, and workouts. Leaderboard totals include all activities for those sample users, not only the seeded activity fixtures.
+`npm run seed` removes any previously seeded sample records and recreates them, so it can be rerun safely. Leaderboard totals are calculated from the seeded activities.

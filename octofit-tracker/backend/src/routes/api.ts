@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Types } from 'mongoose';
 import { Activity } from '../models/activity.js';
-import { LeaderboardEntry } from '../models/leaderboard.js';
+import { Leaderboard } from '../models/leaderboard.js';
 import { Team } from '../models/team.js';
 import { User } from '../models/user.js';
 import { Workout } from '../models/workout.js';
@@ -21,18 +21,18 @@ async function refreshLeaderboard(userId: string): Promise<void> {
     { $group: { _id: null, points: { $sum: '$points' } } },
   ]);
 
-  await LeaderboardEntry.findOneAndUpdate(
+  await Leaderboard.findOneAndUpdate(
     { user: userId },
     { $set: { points: totals?.points ?? 0, period: 'all-time' } },
     { upsert: true, setDefaultsOnInsert: true },
   );
 }
 
-router.get('/users', async (_request, response) => {
+router.get('/api/users', async (_request, response) => {
   response.json(await User.find().populate('team', 'name'));
 });
 
-router.post('/users', async (request, response) => {
+router.post('/api/users', async (request, response) => {
   const team = request.body.team ? await Team.findById(request.body.team) : null;
   if (request.body.team && !team) {
     response.status(400).json({ error: 'Team not found' });
@@ -43,7 +43,7 @@ router.post('/users', async (request, response) => {
   if (team) {
     await setUserTeam(user._id, team._id);
   }
-  await LeaderboardEntry.findOneAndUpdate(
+  await Leaderboard.findOneAndUpdate(
     { user: user._id },
     { $setOnInsert: { points: 0, period: 'all-time' } },
     { upsert: true },
@@ -51,7 +51,7 @@ router.post('/users', async (request, response) => {
   response.status(201).json(await user.populate('team', 'name'));
 });
 
-router.get('/users/:id', async (request, response) => {
+router.get('/api/users/:id', async (request, response) => {
   const user = await User.findById(request.params.id).populate('team', 'name');
   if (!user) {
     response.status(404).json({ error: 'User not found' });
@@ -60,7 +60,7 @@ router.get('/users/:id', async (request, response) => {
   response.json(user);
 });
 
-router.patch('/users/:id', async (request, response) => {
+router.patch('/api/users/:id', async (request, response) => {
   const existingUser = await User.findById(request.params.id);
   if (!existingUser) {
     response.status(404).json({ error: 'User not found' });
@@ -88,7 +88,7 @@ router.patch('/users/:id', async (request, response) => {
   response.json(user);
 });
 
-router.delete('/users/:id', async (request, response) => {
+router.delete('/api/users/:id', async (request, response) => {
   const user = await User.findByIdAndDelete(request.params.id);
   if (!user) {
     response.status(404).json({ error: 'User not found' });
@@ -96,17 +96,17 @@ router.delete('/users/:id', async (request, response) => {
   }
   await Promise.all([
     Activity.deleteMany({ user: user._id }),
-    LeaderboardEntry.deleteOne({ user: user._id }),
+    Leaderboard.deleteOne({ user: user._id }),
     Team.updateMany({ members: user._id }, { $pull: { members: user._id } }),
   ]);
   response.status(204).end();
 });
 
-router.get('/teams', async (_request, response) => {
+router.get('/api/teams', async (_request, response) => {
   response.json(await Team.find().populate('members', 'username displayName'));
 });
 
-router.post('/teams', async (request, response) => {
+router.post('/api/teams', async (request, response) => {
   const memberIds = Array.isArray(request.body.members) ? request.body.members : [];
   const validMembers = await User.find({ _id: { $in: memberIds } }).select('_id');
   if (validMembers.length !== memberIds.length) {
@@ -121,7 +121,7 @@ router.post('/teams', async (request, response) => {
   response.status(201).json(await team.populate('members', 'username displayName'));
 });
 
-router.get('/teams/:id', async (request, response) => {
+router.get('/api/teams/:id', async (request, response) => {
   const team = await Team.findById(request.params.id).populate('members', 'username displayName');
   if (!team) {
     response.status(404).json({ error: 'Team not found' });
@@ -130,7 +130,7 @@ router.get('/teams/:id', async (request, response) => {
   response.json(team);
 });
 
-router.patch('/teams/:id', async (request, response) => {
+router.patch('/api/teams/:id', async (request, response) => {
   const existingTeam = await Team.findById(request.params.id);
   if (!existingTeam) {
     response.status(404).json({ error: 'Team not found' });
@@ -171,7 +171,7 @@ router.patch('/teams/:id', async (request, response) => {
   response.json(team);
 });
 
-router.delete('/teams/:id', async (request, response) => {
+router.delete('/api/teams/:id', async (request, response) => {
   const team = await Team.findByIdAndDelete(request.params.id);
   if (!team) {
     response.status(404).json({ error: 'Team not found' });
@@ -181,7 +181,7 @@ router.delete('/teams/:id', async (request, response) => {
   response.status(204).end();
 });
 
-router.get('/activities', async (request, response) => {
+router.get('/api/activities', async (request, response) => {
   const activities = Activity.find();
   if (typeof request.query.user === 'string') {
     activities.where('user').equals(request.query.user);
@@ -189,7 +189,7 @@ router.get('/activities', async (request, response) => {
   response.json(await activities.populate('user', 'username displayName').sort({ loggedAt: -1 }));
 });
 
-router.post('/activities', async (request, response) => {
+router.post('/api/activities', async (request, response) => {
   if (!(await User.exists({ _id: request.body.user }))) {
     response.status(400).json({ error: 'User not found' });
     return;
@@ -199,7 +199,7 @@ router.post('/activities', async (request, response) => {
   response.status(201).json(activity);
 });
 
-router.get('/activities/:id', async (request, response) => {
+router.get('/api/activities/:id', async (request, response) => {
   const activity = await Activity.findById(request.params.id).populate('user', 'username displayName');
   if (!activity) {
     response.status(404).json({ error: 'Activity not found' });
@@ -208,7 +208,7 @@ router.get('/activities/:id', async (request, response) => {
   response.json(activity);
 });
 
-router.patch('/activities/:id', async (request, response) => {
+router.patch('/api/activities/:id', async (request, response) => {
   const previousActivity = await Activity.findById(request.params.id);
   if (!previousActivity) {
     response.status(404).json({ error: 'Activity not found' });
@@ -237,7 +237,7 @@ router.patch('/activities/:id', async (request, response) => {
   response.json(await activity.populate('user', 'username displayName'));
 });
 
-router.delete('/activities/:id', async (request, response) => {
+router.delete('/api/activities/:id', async (request, response) => {
   const activity = await Activity.findByIdAndDelete(request.params.id);
   if (!activity) {
     response.status(404).json({ error: 'Activity not found' });
@@ -247,8 +247,8 @@ router.delete('/activities/:id', async (request, response) => {
   response.status(204).end();
 });
 
-router.get('/leaderboard', async (request, response) => {
-  const entriesQuery = LeaderboardEntry.find();
+router.get('/api/leaderboard', async (request, response) => {
+  const entriesQuery = Leaderboard.find();
   if (typeof request.query.period === 'string') {
     entriesQuery.where('period').equals(request.query.period);
   }
@@ -256,7 +256,7 @@ router.get('/leaderboard', async (request, response) => {
   response.json(entries.map((entry, index) => ({ ...entry.toObject(), rank: index + 1 })));
 });
 
-router.get('/workouts', async (request, response) => {
+router.get('/api/workouts', async (request, response) => {
   const workouts = Workout.find();
   if (typeof request.query.difficulty === 'string') {
     workouts.where('difficulty').equals(request.query.difficulty);
@@ -264,11 +264,11 @@ router.get('/workouts', async (request, response) => {
   response.json(await workouts.sort({ title: 1 }));
 });
 
-router.post('/workouts', async (request, response) => {
+router.post('/api/workouts', async (request, response) => {
   response.status(201).json(await Workout.create(request.body));
 });
 
-router.get('/workouts/:id', async (request, response) => {
+router.get('/api/workouts/:id', async (request, response) => {
   const workout = await Workout.findById(request.params.id);
   if (!workout) {
     response.status(404).json({ error: 'Workout not found' });
@@ -277,7 +277,7 @@ router.get('/workouts/:id', async (request, response) => {
   response.json(workout);
 });
 
-router.patch('/workouts/:id', async (request, response) => {
+router.patch('/api/workouts/:id', async (request, response) => {
   const workout = await Workout.findByIdAndUpdate(request.params.id, request.body, {
     returnDocument: 'after',
     runValidators: true,
@@ -289,7 +289,7 @@ router.patch('/workouts/:id', async (request, response) => {
   response.json(workout);
 });
 
-router.delete('/workouts/:id', async (request, response) => {
+router.delete('/api/workouts/:id', async (request, response) => {
   const workout = await Workout.findByIdAndDelete(request.params.id);
   if (!workout) {
     response.status(404).json({ error: 'Workout not found' });

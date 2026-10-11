@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import mongoose from 'mongoose';
 import { Activity } from '../models/activity.js';
-import { LeaderboardEntry } from '../models/leaderboard.js';
+import { Leaderboard } from '../models/leaderboard.js';
 import { Team } from '../models/team.js';
 import { User } from '../models/user.js';
 import { Workout } from '../models/workout.js';
@@ -66,88 +66,60 @@ async function seedDatabase(): Promise<void> {
   console.log('Connected to octofit_db');
 
   try {
-    const teams = new Map<string, mongoose.Types.ObjectId>();
-    for (const seed of teamSeeds) {
-      const team = await Team.findOneAndUpdate(
-        { name: seed.name },
-        { $set: seed },
-        { upsert: true, returnDocument: 'after', runValidators: true },
-      );
-      teams.set(seed.name, team._id);
-    }
-
-    const users = new Map<string, mongoose.Types.ObjectId>();
-    for (const seed of userSeeds) {
-      const teamId = teams.get(seed.team);
-      if (!teamId) {
-        throw new Error(`Missing seeded team: ${seed.team}`);
-      }
-      const user = await User.findOneAndUpdate(
-        { username: seed.username },
-        {
-          $set: {
-            email: seed.email,
-            displayName: seed.displayName,
-            team: teamId,
-          },
-        },
-        { upsert: true, returnDocument: 'after', runValidators: true },
-      );
-      users.set(seed.username, user._id);
-    }
-
-    const seededUserIds = [...users.values()];
-    await Team.updateMany({}, { $pull: { members: { $in: seededUserIds } } });
-    for (const [teamName, teamId] of teams) {
-      const memberIds = userSeeds
-        .filter((user) => user.team === teamName)
-        .map((user) => users.get(user.username))
-        .filter((id): id is mongoose.Types.ObjectId => id !== undefined);
-      await Team.findByIdAndUpdate(
-        teamId,
-        { $addToSet: { members: { $each: memberIds } } },
-        { runValidators: true },
-      );
-    }
-
-    for (const seed of activitySeeds) {
-      const { username, ...activity } = seed;
-      const userId = users.get(username);
-      if (!userId) {
-        throw new Error(`Missing seeded user: ${username}`);
-      }
-      await Activity.findOneAndUpdate(
-        { user: userId, loggedAt: new Date(activity.loggedAt) },
-        { $set: { ...activity, user: userId, loggedAt: new Date(activity.loggedAt) } },
-        { upsert: true, returnDocument: 'after', runValidators: true },
-      );
-    }
-
-    const leaderboardTotals = await Activity.aggregate([
-      { $match: { user: { $in: seededUserIds } } },
-      { $group: { _id: '$user', points: { $sum: '$points' } } },
+    // Remove previously seeded records so the command can be rerun safely.
+    const teamNames = teamSeeds.map((team) => team.name);
+    const [oldTeams, oldUsers] = await Promise.all([
+      Team.find({ name: { $in: teamNames } }).select('_id'),
+      User.find({ username: { $in: userSeeds.map((user) => user.username) } }).select('_id'),
     ]);
-    const pointsByUserId = new Map(
-      leaderboardTotals.map((entry: { _id: mongoose.Types.ObjectId; points: number }) => [
-        entry._id.toString(),
-        entry.points,
-      ]),
+    const oldTeamIds = oldTeams.map((team) => team._id);
+    const oldUserIds = oldUsers.map((user) => user._id);
+    await Promise.all([
+      Activity.deleteMany({ user: { $in: oldUserIds } }),
+      Leaderboard.deleteMany({ user: { $in: oldUserIds } }),
+      Team.updateMany({}, { $pull: { members: { $in: oldUserIds } } }),
+      User.updateMany({ team: { $in: oldTeamIds } }, { $set: { team: null } }),
+    ]);
+    await Promise.all([
+      User.deleteMany({ _id: { $in: oldUserIds } }),
+      Team.deleteMany({ _id: { $in: oldTeamIds } }),
+      Workout.deleteMany({ title: { $in: workoutSeeds.map((workout) => workout.title) } }),
+    ]);
+
+    const teams = await Team.insertMany(teamSeeds);
+    const teamIds = new Map(teams.map((team) => [team.name, team._id]));
+
+    const users = await User.insertMany(
+      userSeeds.map(({ team, ...user }) => ({ ...user, team: teamIds.get(team) })),
     );
-    for (const userId of users.values()) {
-      await LeaderboardEntry.findOneAndUpdate(
-        { user: userId },
-        { $set: { points: pointsByUserId.get(userId.toString()) ?? 0, period: 'all-time' } },
-        { upsert: true, returnDocument: 'after', runValidators: true },
-      );
+    const userIds = new Map(users.map((user) => [user.username, user._id]));
+
+    for (const team of teams) {
+      const members = userSeeds
+        .filter((user) => user.team === team.name)
+        .map((user) => userIds.get(user.username));
+      await Team.findByIdAndUpdate(team._id, { $set: { members } });
     }
 
-    for (const seed of workoutSeeds) {
-      await Workout.findOneAndUpdate(
-        { title: seed.title },
-        { $set: seed },
-        { upsert: true, returnDocument: 'after', runValidators: true },
-      );
-    }
+    await Activity.insertMany(
+      activitySeeds.map(({ username, ...activity }) => ({
+        ...activity,
+        user: userIds.get(username),
+        loggedAt: new Date(activity.loggedAt),
+      })),
+    );
+
+    await Leaderboard.insertMany(
+      userSeeds.map(({ username }) => ({
+        user: userIds.get(username),
+        points: activitySeeds
+          .filter((activity) => activity.username === username)
+          .reduce((total, activity) => total + activity.points, 0),
+        period: 'all-time',
+      })),
+    );
+
+    await Workout.insertMany(workoutSeeds);
 
     console.log(
       `Seeded ${userSeeds.length} users, ${teamSeeds.length} teams, ${activitySeeds.length} activities, ` +
