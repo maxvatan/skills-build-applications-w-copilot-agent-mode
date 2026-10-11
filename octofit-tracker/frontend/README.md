@@ -1,32 +1,30 @@
-# React + TypeScript + Vite
+# OctoFit Tracker – Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 19 + Vite + react-router-dom + Bootstrap. Runs on port 5173.
 
-Currently, two official plugins are available:
+## Pages
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+`/activities`, `/leaderboard`, `/teams`, `/users`, `/workouts`. Each page fetches `/api/<resource>/` from the backend and accepts either a plain array or a paginated `{ results: [...] }` response.
 
-## React Compiler
+## API base URL
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The API base URL is built in [src/api.js](src/api.js) using Vite environment variables (`import.meta.env`):
 
-## Expanding the Oxlint configuration
+- **`VITE_CODESPACE_NAME` must be defined** to use the Codespaces backend, for example in `octofit-tracker/frontend/.env.local`:
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+  ```env
+  VITE_CODESPACE_NAME=your-codespace-name
+  ```
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+  The API is then `https://$VITE_CODESPACE_NAME-8000.app.github.dev`. Find the name with `echo $CODESPACE_NAME`. See [.env.example](.env.example).
+- If `VITE_CODESPACE_NAME` is unset (or invalid), the app falls back to `http://localhost:8000`.
+
+Restart the dev server after changing `.env.local`.
+
+## Scripts
+
+```bash
+npm run dev     # start Vite on 0.0.0.0:5173
+npm run build   # production build
+npm run lint    # oxlint
 ```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
